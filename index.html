@@ -284,6 +284,117 @@
       display: none;
       z-index: 50;
     }
+
+    /* ── Load panel ── */
+    #loadPanel {
+      position: fixed;
+      bottom: 36px;
+      left: 16px;
+      width: 300px;
+      background: var(--surface);
+      border: 1px solid var(--border);
+      border-radius: 10px;
+      box-shadow: 0 8px 32px rgba(0,0,0,.55);
+      z-index: 200;
+      overflow: hidden;
+      transform: translateY(20px);
+      opacity: 0;
+      pointer-events: none;
+      transition: transform .22s ease, opacity .22s ease;
+    }
+    #loadPanel.visible {
+      transform: translateY(0);
+      opacity: 1;
+      pointer-events: auto;
+    }
+    .lp-header {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      padding: 10px 14px 8px;
+      border-bottom: 1px solid var(--border);
+    }
+    .lp-title {
+      font-size: .8rem;
+      font-weight: 600;
+      color: var(--text);
+      display: flex;
+      align-items: center;
+      gap: 7px;
+    }
+    .lp-title .lp-spinner {
+      width: 12px; height: 12px;
+      border: 2px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+      flex-shrink: 0;
+    }
+    .lp-title .lp-done-icon {
+      width: 12px; height: 12px;
+      flex-shrink: 0;
+      display: none;
+    }
+    #loadPanel.all-done .lp-spinner { display: none; }
+    #loadPanel.all-done .lp-done-icon { display: block; }
+    .lp-close {
+      background: none;
+      border: none;
+      color: var(--text-dim);
+      cursor: pointer;
+      padding: 2px 4px;
+      font-size: 1rem;
+      line-height: 1;
+      border-radius: 4px;
+    }
+    .lp-close:hover { color: var(--text); background: var(--surface2); }
+    .lp-list {
+      max-height: 260px;
+      overflow-y: auto;
+      padding: 8px 0;
+    }
+    .lp-list::-webkit-scrollbar { width: 4px; }
+    .lp-list::-webkit-scrollbar-track { background: transparent; }
+    .lp-list::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+    .lp-row {
+      padding: 6px 14px;
+    }
+    .lp-row-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 5px;
+      gap: 8px;
+    }
+    .lp-filename {
+      font-size: .75rem;
+      color: var(--text);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      flex: 1;
+    }
+    .lp-status {
+      font-size: .68rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      flex-shrink: 0;
+    }
+    .lp-bar-bg {
+      height: 4px;
+      background: var(--surface2);
+      border-radius: 2px;
+      overflow: hidden;
+    }
+    .lp-bar-fill {
+      height: 100%;
+      border-radius: 2px;
+      background: var(--accent);
+      transition: width .18s ease;
+      width: 0%;
+    }
+    .lp-row.state-done .lp-bar-fill { background: #4caf7d; }
+    .lp-row.state-error .lp-bar-fill { background: var(--danger); }
   </style>
 </head>
 <body>
@@ -332,6 +443,21 @@
 <div id="toast"></div>
 <div id="selectionBox"></div>
 
+<!-- Bottom-left load progress panel -->
+<div id="loadPanel">
+  <div class="lp-header">
+    <span class="lp-title">
+      <span class="lp-spinner"></span>
+      <svg class="lp-done-icon" viewBox="0 0 12 12" fill="none" stroke="#4caf7d" stroke-width="2" stroke-linecap="round">
+        <polyline points="1.5,6 4.5,9 10.5,3"/>
+      </svg>
+      Loading files
+    </span>
+    <button class="lp-close" onclick="hideLoadPanel()" title="Dismiss">&#x2715;</button>
+  </div>
+  <div class="lp-list" id="lpList"></div>
+</div>
+
 <script>
 // ─────────────────────────────────────────
 //  State
@@ -349,25 +475,85 @@ document.getElementById('fileInput').addEventListener('change', e => {
 
 async function loadFiles(files) {
   if (!files.length) return;
-  setStatus('Loading…');
-  for (const file of files) {
+  openLoadPanel(files);
+
+  for (let fi = 0; fi < files.length; fi++) {
+    const file = files[fi];
     try {
-      const zip = await JSZip.loadAsync(file);
+      setFileProgress(fi, 'Parsing…', 0);
+      const zip = await JSZip.loadAsync(file, {
+        onUpdate: meta => setFileProgress(fi, 'Parsing…', meta.percent * 0.4)
+      });
+
       const imgEntries = Object.values(zip.files)
         .filter(f => !f.dir && /\.(jpe?g|png|gif|webp|bmp|avif)$/i.test(f.name))
         .sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'}));
 
-      for (const entry of imgEntries) {
-        const blob = await entry.async('blob');
+      const total = imgEntries.length;
+      for (let ei = 0; ei < total; ei++) {
+        setFileProgress(fi, `${ei + 1} / ${total} pages`, 40 + ((ei + 1) / total) * 60);
+        const blob = await imgEntries[ei].async('blob');
         const url  = URL.createObjectURL(blob);
-        pages.push({ name: entry.name, blob, url, sourceFile: file.name });
+        pages.push({ name: imgEntries[ei].name, blob, url, sourceFile: file.name });
       }
+      setFileProgress(fi, `${total} pages`, 100, 'done');
     } catch (err) {
-      showToast(`Failed to read ${file.name}: ${err.message}`);
+      setFileProgress(fi, err.message, 100, 'error');
     }
   }
+
   renderGrid();
   updateUI();
+  finishLoadPanel();
+}
+
+// ─────────────────────────────────────────
+//  Load panel helpers
+// ─────────────────────────────────────────
+let loadPanelDismissTimer = null;
+
+function openLoadPanel(files) {
+  clearTimeout(loadPanelDismissTimer);
+  const panel = document.getElementById('loadPanel');
+  const list  = document.getElementById('lpList');
+  panel.classList.remove('all-done');
+  list.innerHTML = '';
+
+  files.forEach((f, i) => {
+    const row = document.createElement('div');
+    row.className = 'lp-row';
+    row.id = `lp-row-${i}`;
+    row.innerHTML = `
+      <div class="lp-row-top">
+        <span class="lp-filename" title="${f.name}">${f.name}</span>
+        <span class="lp-status" id="lp-status-${i}">Waiting…</span>
+      </div>
+      <div class="lp-bar-bg"><div class="lp-bar-fill" id="lp-bar-${i}"></div></div>
+    `;
+    list.appendChild(row);
+  });
+
+  panel.classList.add('visible');
+}
+
+function setFileProgress(fi, statusText, percent, state) {
+  const bar    = document.getElementById(`lp-bar-${fi}`);
+  const status = document.getElementById(`lp-status-${fi}`);
+  const row    = document.getElementById(`lp-row-${fi}`);
+  if (!bar) return;
+  bar.style.width = Math.min(100, percent).toFixed(1) + '%';
+  status.textContent = statusText;
+  if (state) row.classList.add(`state-${state}`);
+}
+
+function finishLoadPanel() {
+  document.getElementById('loadPanel').classList.add('all-done');
+  loadPanelDismissTimer = setTimeout(hideLoadPanel, 3500);
+}
+
+function hideLoadPanel() {
+  clearTimeout(loadPanelDismissTimer);
+  document.getElementById('loadPanel').classList.remove('visible');
 }
 
 // ─────────────────────────────────────────
