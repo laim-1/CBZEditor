@@ -1,0 +1,685 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>CBZ Editor</title>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --bg: #1a1a1e;
+      --surface: #26262c;
+      --surface2: #32323a;
+      --border: #3e3e48;
+      --accent: #7c6af7;
+      --accent-hover: #9585ff;
+      --danger: #e05252;
+      --danger-hover: #f06060;
+      --text: #e2e2e8;
+      --text-dim: #8888a0;
+      --select: rgba(124, 106, 247, 0.35);
+      --select-border: #7c6af7;
+      --thumb-w: 140px;
+      --thumb-h: 190px;
+    }
+
+    body {
+      font-family: system-ui, -apple-system, sans-serif;
+      background: var(--bg);
+      color: var(--text);
+      min-height: 100vh;
+      display: flex;
+      flex-direction: column;
+    }
+
+    /* ── Header ── */
+    header {
+      background: var(--surface);
+      border-bottom: 1px solid var(--border);
+      padding: 12px 20px;
+      display: flex;
+      align-items: center;
+      gap: 16px;
+      flex-wrap: wrap;
+      position: sticky;
+      top: 0;
+      z-index: 100;
+    }
+
+    header h1 {
+      font-size: 1.1rem;
+      font-weight: 700;
+      letter-spacing: .03em;
+      color: var(--accent);
+      white-space: nowrap;
+    }
+
+    .toolbar {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      flex-wrap: wrap;
+      flex: 1;
+    }
+
+    button {
+      background: var(--surface2);
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 6px;
+      padding: 6px 14px;
+      font-size: .82rem;
+      cursor: pointer;
+      transition: background .15s, border-color .15s;
+      white-space: nowrap;
+    }
+    button:hover:not(:disabled) { background: var(--border); border-color: #555566; }
+    button:disabled { opacity: .38; cursor: default; }
+
+    button.primary {
+      background: var(--accent);
+      border-color: var(--accent);
+      color: #fff;
+      font-weight: 600;
+    }
+    button.primary:hover:not(:disabled) { background: var(--accent-hover); border-color: var(--accent-hover); }
+
+    button.danger {
+      background: transparent;
+      border-color: var(--danger);
+      color: var(--danger);
+    }
+    button.danger:hover:not(:disabled) { background: var(--danger); color: #fff; }
+
+    .sep { width: 1px; height: 24px; background: var(--border); margin: 0 4px; }
+
+    .sel-count {
+      font-size: .8rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+    }
+
+    /* file input hidden */
+    #fileInput { display: none; }
+
+    /* export row */
+    .export-row {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      margin-left: auto;
+    }
+    .export-row input[type="text"] {
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      border-radius: 6px;
+      padding: 6px 10px;
+      font-size: .82rem;
+      width: 180px;
+    }
+    .export-row input[type="text"]:focus {
+      outline: none;
+      border-color: var(--accent);
+    }
+
+    /* ── Drop zone ── */
+    #dropZone {
+      flex: 1;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 16px;
+      color: var(--text-dim);
+      border: 2px dashed var(--border);
+      margin: 32px;
+      border-radius: 16px;
+      padding: 60px 20px;
+      transition: border-color .2s, background .2s;
+    }
+    #dropZone.drag-over {
+      border-color: var(--accent);
+      background: rgba(124,106,247,.06);
+      color: var(--text);
+    }
+    #dropZone svg { opacity: .4; }
+    #dropZone p { font-size: 1rem; }
+    #dropZone small { font-size: .8rem; }
+
+    /* ── Grid ── */
+    #grid {
+      display: none;
+      flex-direction: column;
+      padding: 20px;
+      gap: 16px;
+    }
+
+    .grid-inner {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 12px;
+      align-content: flex-start;
+    }
+
+    /* ── Thumbnail card ── */
+    .thumb {
+      width: var(--thumb-w);
+      border-radius: 8px;
+      background: var(--surface);
+      border: 2px solid var(--border);
+      overflow: hidden;
+      cursor: pointer;
+      user-select: none;
+      transition: border-color .15s, transform .15s, box-shadow .15s;
+      position: relative;
+      flex-shrink: 0;
+    }
+    .thumb:hover { border-color: #555566; transform: translateY(-2px); box-shadow: 0 6px 20px rgba(0,0,0,.4); }
+    .thumb.selected {
+      border-color: var(--select-border);
+      background: var(--select);
+      box-shadow: 0 0 0 2px var(--accent);
+    }
+    .thumb.drag-over-thumb { border-color: var(--accent); border-style: dashed; }
+
+    .thumb-img-wrap {
+      width: 100%;
+      height: var(--thumb-h);
+      background: #111;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      overflow: hidden;
+    }
+    .thumb-img-wrap img {
+      max-width: 100%;
+      max-height: 100%;
+      object-fit: contain;
+      display: block;
+    }
+    .spinner {
+      width: 24px; height: 24px;
+      border: 3px solid var(--border);
+      border-top-color: var(--accent);
+      border-radius: 50%;
+      animation: spin .7s linear infinite;
+    }
+    @keyframes spin { to { transform: rotate(360deg); } }
+
+    .thumb-label {
+      padding: 5px 8px;
+      font-size: .72rem;
+      color: var(--text-dim);
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+      border-top: 1px solid var(--border);
+      text-align: center;
+    }
+
+    .thumb .check {
+      position: absolute;
+      top: 5px; left: 5px;
+      width: 18px; height: 18px;
+      border-radius: 50%;
+      background: var(--accent);
+      border: 2px solid #fff;
+      display: none;
+      align-items: center;
+      justify-content: center;
+    }
+    .thumb.selected .check { display: flex; }
+    .check svg { width: 10px; height: 10px; fill: #fff; }
+
+    /* drag ghost */
+    .thumb.dragging { opacity: .35; transform: scale(.97); }
+
+    /* page index badge */
+    .page-num {
+      position: absolute;
+      top: 5px; right: 5px;
+      background: rgba(0,0,0,.65);
+      color: #ccc;
+      font-size: .65rem;
+      padding: 2px 5px;
+      border-radius: 4px;
+    }
+
+    /* ── Status bar ── */
+    #statusBar {
+      padding: 6px 20px;
+      font-size: .75rem;
+      color: var(--text-dim);
+      border-top: 1px solid var(--border);
+      background: var(--surface);
+    }
+
+    /* ── Toast ── */
+    #toast {
+      position: fixed;
+      bottom: 24px; left: 50%;
+      transform: translateX(-50%) translateY(60px);
+      background: var(--surface2);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 20px;
+      border-radius: 8px;
+      font-size: .85rem;
+      transition: transform .25s ease;
+      z-index: 999;
+      pointer-events: none;
+      white-space: nowrap;
+    }
+    #toast.show { transform: translateX(-50%) translateY(0); }
+
+    /* ── Selection box ── */
+    #selectionBox {
+      position: fixed;
+      border: 1px solid var(--accent);
+      background: rgba(124,106,247,.12);
+      pointer-events: none;
+      display: none;
+      z-index: 50;
+    }
+  </style>
+</head>
+<body>
+
+<header>
+  <h1>CBZ Editor</h1>
+  <div class="toolbar">
+    <input type="file" id="fileInput" accept=".cbz,.zip" multiple />
+    <button id="btnLoad" onclick="document.getElementById('fileInput').click()">+ Load CBZ / ZIP</button>
+    <div class="sep"></div>
+    <button id="btnSelectAll" disabled onclick="selectAll()">Select All</button>
+    <button id="btnInvert" disabled onclick="invertSelection()">Invert</button>
+    <button id="btnDeselect" disabled onclick="deselectAll()">Deselect</button>
+    <div class="sep"></div>
+    <button id="btnMoveLeft" disabled onclick="moveSelected(-1)">&#8592; Move Left</button>
+    <button id="btnMoveRight" disabled onclick="moveSelected(1)">Move Right &#8594;</button>
+    <div class="sep"></div>
+    <button id="btnDelete" class="danger" disabled onclick="deleteSelected()">Delete Selected</button>
+    <span class="sel-count" id="selCount"></span>
+    <div class="export-row">
+      <input type="text" id="outputName" placeholder="output.cbz" value="output.cbz" />
+      <button class="primary" id="btnExport" disabled onclick="exportCBZ()">Export CBZ</button>
+    </div>
+  </div>
+</header>
+
+<!-- Drop zone (shown when empty) -->
+<div id="dropZone">
+  <svg width="64" height="64" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5">
+    <path d="M4 16v2a2 2 0 002 2h12a2 2 0 002-2v-2"/>
+    <polyline points="8 12 12 8 16 12"/>
+    <line x1="12" y1="8" x2="12" y2="20"/>
+    <rect x="2" y="4" width="6" height="8" rx="1" opacity=".4"/>
+    <rect x="16" y="4" width="6" height="8" rx="1" opacity=".4"/>
+  </svg>
+  <p>Drop CBZ / ZIP files here, or click <strong>Load</strong></p>
+  <small>Supports multiple files — pages are merged in order</small>
+</div>
+
+<!-- Main grid -->
+<div id="grid">
+  <div class="grid-inner" id="gridInner"></div>
+</div>
+
+<div id="statusBar">No files loaded.</div>
+<div id="toast"></div>
+<div id="selectionBox"></div>
+
+<script>
+// ─────────────────────────────────────────
+//  State
+// ─────────────────────────────────────────
+let pages = [];          // [{name, blob, url, sourceFile}]
+let selected = new Set();
+
+// ─────────────────────────────────────────
+//  File loading
+// ─────────────────────────────────────────
+document.getElementById('fileInput').addEventListener('change', e => {
+  loadFiles([...e.target.files]);
+  e.target.value = '';
+});
+
+async function loadFiles(files) {
+  if (!files.length) return;
+  setStatus('Loading…');
+  for (const file of files) {
+    try {
+      const zip = await JSZip.loadAsync(file);
+      const imgEntries = Object.values(zip.files)
+        .filter(f => !f.dir && /\.(jpe?g|png|gif|webp|bmp|avif)$/i.test(f.name))
+        .sort((a, b) => a.name.localeCompare(b.name, undefined, {numeric: true, sensitivity: 'base'}));
+
+      for (const entry of imgEntries) {
+        const blob = await entry.async('blob');
+        const url  = URL.createObjectURL(blob);
+        pages.push({ name: entry.name, blob, url, sourceFile: file.name });
+      }
+    } catch (err) {
+      showToast(`Failed to read ${file.name}: ${err.message}`);
+    }
+  }
+  renderGrid();
+  updateUI();
+}
+
+// ─────────────────────────────────────────
+//  Render
+// ─────────────────────────────────────────
+function renderGrid() {
+  const inner = document.getElementById('gridInner');
+  inner.innerHTML = '';
+
+  if (pages.length === 0) {
+    document.getElementById('dropZone').style.display = '';
+    document.getElementById('grid').style.display = 'none';
+    return;
+  }
+
+  document.getElementById('dropZone').style.display = 'none';
+  document.getElementById('grid').style.display = 'flex';
+
+  pages.forEach((page, idx) => {
+    const card = document.createElement('div');
+    card.className = 'thumb' + (selected.has(idx) ? ' selected' : '');
+    card.dataset.idx = idx;
+    card.draggable = true;
+
+    card.innerHTML = `
+      <div class="check"><svg viewBox="0 0 10 10"><polyline points="1.5,5 4,7.5 8.5,2.5" stroke="#fff" stroke-width="1.8" fill="none" stroke-linecap="round"/></svg></div>
+      <span class="page-num">${idx + 1}</span>
+      <div class="thumb-img-wrap">
+        <div class="spinner"></div>
+      </div>
+      <div class="thumb-label" title="${page.name}">${shortName(page.name)}</div>
+    `;
+
+    // lazy-load image
+    const wrap = card.querySelector('.thumb-img-wrap');
+    const img  = new Image();
+    img.onload = () => { wrap.innerHTML = ''; wrap.appendChild(img); };
+    img.onerror = () => { wrap.innerHTML = '<span style="color:var(--text-dim);font-size:.7rem">Error</span>'; };
+    img.src = page.url;
+
+    // click to select
+    card.addEventListener('click', e => handleThumbClick(e, idx));
+
+    // drag events
+    card.addEventListener('dragstart', onDragStart);
+    card.addEventListener('dragover',  onDragOver);
+    card.addEventListener('dragleave', onDragLeave);
+    card.addEventListener('drop',      onDrop);
+    card.addEventListener('dragend',   onDragEnd);
+
+    inner.appendChild(card);
+  });
+
+  updateStatus();
+}
+
+function shortName(name) {
+  const parts = name.split('/');
+  return parts[parts.length - 1];
+}
+
+// ─────────────────────────────────────────
+//  Selection
+// ─────────────────────────────────────────
+let lastClicked = -1;
+
+function handleThumbClick(e, idx) {
+  if (e.shiftKey && lastClicked !== -1) {
+    const lo = Math.min(lastClicked, idx);
+    const hi = Math.max(lastClicked, idx);
+    for (let i = lo; i <= hi; i++) selected.add(i);
+  } else if (e.ctrlKey || e.metaKey) {
+    selected.has(idx) ? selected.delete(idx) : selected.add(idx);
+  } else {
+    if (selected.size === 1 && selected.has(idx)) {
+      selected.clear();
+    } else {
+      selected.clear();
+      selected.add(idx);
+    }
+  }
+  lastClicked = idx;
+  applySelectionClasses();
+  updateUI();
+}
+
+function applySelectionClasses() {
+  document.querySelectorAll('.thumb').forEach(el => {
+    const idx = +el.dataset.idx;
+    el.classList.toggle('selected', selected.has(idx));
+  });
+}
+
+function selectAll() {
+  selected = new Set(pages.map((_, i) => i));
+  applySelectionClasses();
+  updateUI();
+}
+
+function deselectAll() {
+  selected.clear();
+  applySelectionClasses();
+  updateUI();
+}
+
+function invertSelection() {
+  const next = new Set();
+  pages.forEach((_, i) => { if (!selected.has(i)) next.add(i); });
+  selected = next;
+  applySelectionClasses();
+  updateUI();
+}
+
+// ─────────────────────────────────────────
+//  Move & Delete
+// ─────────────────────────────────────────
+function moveSelected(dir) {
+  const indices = [...selected].sort((a, b) => dir > 0 ? b - a : a - b);
+  for (const idx of indices) {
+    const target = idx + dir;
+    if (target < 0 || target >= pages.length) return; // blocked at boundary
+    [pages[idx], pages[target]] = [pages[target], pages[idx]];
+    selected.delete(idx);
+    selected.add(target);
+  }
+  renderGrid();
+  updateUI();
+}
+
+function deleteSelected() {
+  if (!selected.size) return;
+  const indices = [...selected].sort((a, b) => b - a);
+  for (const idx of indices) {
+    URL.revokeObjectURL(pages[idx].url);
+    pages.splice(idx, 1);
+  }
+  selected.clear();
+  lastClicked = -1;
+  renderGrid();
+  updateUI();
+  showToast(`Deleted ${indices.length} page${indices.length > 1 ? 's' : ''}`);
+}
+
+// ─────────────────────────────────────────
+//  Drag-and-drop reorder
+// ─────────────────────────────────────────
+let dragSrcIdx = -1;
+
+function onDragStart(e) {
+  dragSrcIdx = +this.dataset.idx;
+  this.classList.add('dragging');
+  e.dataTransfer.effectAllowed = 'move';
+}
+
+function onDragOver(e) {
+  e.preventDefault();
+  e.dataTransfer.dropEffect = 'move';
+  this.classList.add('drag-over-thumb');
+}
+
+function onDragLeave() {
+  this.classList.remove('drag-over-thumb');
+}
+
+function onDrop(e) {
+  e.preventDefault();
+  this.classList.remove('drag-over-thumb');
+  const dropIdx = +this.dataset.idx;
+  if (dragSrcIdx === dropIdx) return;
+
+  // Move dragged page to drop position
+  const [moved] = pages.splice(dragSrcIdx, 1);
+  pages.splice(dropIdx, 0, moved);
+
+  // Remap selection
+  const newSelected = new Set();
+  selected.forEach(si => {
+    if (si === dragSrcIdx) { newSelected.add(dropIdx); return; }
+    let ni = si;
+    if (dragSrcIdx < dropIdx) {
+      if (si > dragSrcIdx && si <= dropIdx) ni = si - 1;
+    } else {
+      if (si >= dropIdx && si < dragSrcIdx) ni = si + 1;
+    }
+    newSelected.add(ni);
+  });
+  selected = newSelected;
+
+  renderGrid();
+  updateUI();
+}
+
+function onDragEnd() {
+  dragSrcIdx = -1;
+  document.querySelectorAll('.thumb').forEach(el => {
+    el.classList.remove('dragging', 'drag-over-thumb');
+  });
+}
+
+// ─────────────────────────────────────────
+//  Drop zone (file drop on body)
+// ─────────────────────────────────────────
+const dropZone = document.getElementById('dropZone');
+
+['dragenter','dragover'].forEach(ev => {
+  document.addEventListener(ev, e => {
+    if ([...e.dataTransfer.types].includes('Files')) {
+      e.preventDefault();
+      dropZone.classList.add('drag-over');
+    }
+  });
+});
+
+document.addEventListener('dragleave', e => {
+  if (e.relatedTarget === null || e.relatedTarget === document.documentElement) {
+    dropZone.classList.remove('drag-over');
+  }
+});
+
+document.addEventListener('drop', e => {
+  dropZone.classList.remove('drag-over');
+  // Only handle if dropping on body/dropzone, not on a thumb card
+  if (e.target.closest('.thumb')) return;
+  e.preventDefault();
+  const files = [...e.dataTransfer.files].filter(f => /\.(cbz|zip)$/i.test(f.name));
+  if (files.length) loadFiles(files);
+});
+
+// ─────────────────────────────────────────
+//  Export
+// ─────────────────────────────────────────
+async function exportCBZ() {
+  if (!pages.length) return;
+  const btn = document.getElementById('btnExport');
+  btn.disabled = true;
+  btn.textContent = 'Exporting…';
+
+  try {
+    const zip = new JSZip();
+    const pad = String(pages.length).length;
+
+    for (let i = 0; i < pages.length; i++) {
+      const page = pages[i];
+      const ext  = (page.name.match(/\.\w+$/) || ['.jpg'])[0];
+      const num  = String(i + 1).padStart(pad, '0');
+      const fname = `${num}${ext}`;
+      const ab = await page.blob.arrayBuffer();
+      zip.file(fname, ab);
+    }
+
+    const content = await zip.generateAsync({ type: 'blob', compression: 'STORE' },
+      meta => { btn.textContent = `Exporting… ${meta.percent.toFixed(0)}%`; }
+    );
+
+    let name = document.getElementById('outputName').value.trim() || 'output';
+    if (!/\.cbz$/i.test(name)) name += '.cbz';
+
+    const a = document.createElement('a');
+    a.href = URL.createObjectURL(content);
+    a.download = name;
+    a.click();
+    setTimeout(() => URL.revokeObjectURL(a.href), 5000);
+    showToast(`Exported ${pages.length} pages as ${name}`);
+  } catch (err) {
+    showToast('Export failed: ' + err.message);
+  } finally {
+    btn.disabled = false;
+    btn.textContent = 'Export CBZ';
+    updateUI();
+  }
+}
+
+// ─────────────────────────────────────────
+//  UI helpers
+// ─────────────────────────────────────────
+function updateUI() {
+  const hasSel = selected.size > 0;
+  const hasPages = pages.length > 0;
+
+  document.getElementById('btnSelectAll').disabled  = !hasPages;
+  document.getElementById('btnInvert').disabled     = !hasPages;
+  document.getElementById('btnDeselect').disabled   = !hasSel;
+  document.getElementById('btnMoveLeft').disabled   = !hasSel;
+  document.getElementById('btnMoveRight').disabled  = !hasSel;
+  document.getElementById('btnDelete').disabled     = !hasSel;
+  document.getElementById('btnExport').disabled     = !hasPages;
+
+  const cnt = document.getElementById('selCount');
+  cnt.textContent = hasSel ? `${selected.size} / ${pages.length} selected` : `${pages.length} page${pages.length !== 1 ? 's' : ''}`;
+
+  updateStatus();
+}
+
+function updateStatus() {
+  document.getElementById('statusBar').textContent =
+    pages.length
+      ? `${pages.length} page${pages.length !== 1 ? 's' : ''} loaded  •  ${selected.size} selected`
+      : 'No files loaded.';
+}
+
+function setStatus(msg) {
+  document.getElementById('statusBar').textContent = msg;
+}
+
+let toastTimer;
+function showToast(msg) {
+  const t = document.getElementById('toast');
+  t.textContent = msg;
+  t.classList.add('show');
+  clearTimeout(toastTimer);
+  toastTimer = setTimeout(() => t.classList.remove('show'), 3000);
+}
+</script>
+</body>
+</html>
